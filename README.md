@@ -12,10 +12,23 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 服务默认监听 `127.0.0.1:8080`，可通过 `LEDGERLENS_ADDR` 修改。`GET /healthz` 返回 JSON 健康状态。
 
+## 凭证校验
+
+`POST /v1/journal-entries/validate` 无状态校验复式记账凭证：不落盘、不保留跨请求状态，相同输入结果相同。请求体必须为 `application/json` 且顶层为对象：
+
+- `voucher_id`：非空字符串
+- `posting_date`：`YYYY-MM-DD` 格式的有效公历日期
+- `currency`：三位大写字母本位币
+- `lines`：至少两条分录；每条含凭证内唯一的非空 `line_id`、非空 `account_code`、`debit`、`credit`
+
+金额为无符号、无指数、最多两位小数的非负十进制字符串；每条分录恰有一侧严格大于零。借贷合计以精确十进制相等时返回 `200` 与两位小数的 `debit_total`/`credit_total`；否则返回 `422`、`valid: false` 与按 `path`、`code` 排序的错误列表（JSON Pointer 路径）。金额无法解析时不追加余额错误。
+
+媒体类型不符返回 `415 unsupported_media_type`，JSON 解析失败返回 `400 invalid_json`，顶层非对象返回 `400 request_not_object`，三者均使用 `error` 对象。
+
 ## 验证
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-当前基线刻意不包含复式记账、报表生成与审计留痕的实现，以便后续任务从已冻结事实出发独立设计并验证这些能力。
+当前基线仅包含无状态凭证校验；报表生成、期间结账与审计留痕等能力仍待后续任务从已冻结事实出发独立设计并验证。
