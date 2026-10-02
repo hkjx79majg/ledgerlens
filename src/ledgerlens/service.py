@@ -1,20 +1,26 @@
 """Core service surface for LedgerLens.
 
-The frozen baseline only reports process health. Later work adds the real
-capabilities described in README.md behind this module; keep the public
-surface here backward compatible.
+Currently exposes process health plus stateless double-entry journal
+validation. Keep the public surface here backward compatible.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from . import __version__
+from .journal import validate_journal_entry
 
 
 class Service:
-    """Placeholder service. Only health reporting is implemented."""
+    """Stateless service surface: health reporting and journal validation."""
 
     name = "ledgerlens"
     version = __version__
 
     def health(self) -> dict[str, str]:
         return {"status": "ok", "service": self.name, "version": self.version}
+
+    def validate_journal_entry(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """校验复式记账凭证，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
+        return validate_journal_entry(payload)
