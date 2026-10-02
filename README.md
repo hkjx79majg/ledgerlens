@@ -32,6 +32,14 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并按 `account_code` 字典序返回 chart 全部科目的 `accounts` 行：每行含 `code`、`name`、`type`、`opening_debit`/`opening_credit`、`period_debit`/`period_credit`、`ending_debit`/`ending_credit`；期末为期初净额加期间净发生额抵销后仅落一侧，零额两侧均为 `0.00`。`totals` 汇总六个金额列，父子科目不重复汇总，每行只计自身余额。金额使用精确十进制并统一输出两位小数；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致；处理不落盘、不保留状态。
 
+## 财务报表生成
+
+`POST /v1/financial-statements/generate`（`Content-Type: application/json`）由与试算平衡表完全相同的请求（同一 JSON 契约、精确十进制与校验语义）无状态地生成损益表与资产负债表。任何字段级或跨对象校验失败均返回与试算平衡表端点一致的 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型不符 415、JSON 解析失败 400、顶层非对象 400，错误体与既有端点一致；处理不落盘、相同输入结果一致。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并给出 `income_statement` 与 `balance_sheet`。`income_statement` 按 `account_code` 字典序列出 chart 中全部 revenue、expense 科目：`revenue` 与 `expense` 各为行数组，每行含 `account_code`、`name`、`amount`；收入金额为本期贷方发生额减借方发生额，费用金额为本期借方发生额减贷方发生额；并汇总 `total_revenue`、`total_expense` 与 `net_income`（收入合计减费用合计）。
+
+`balance_sheet` 按相同字典序分组列出全部 asset、liability、equity 科目（`assets`、`liabilities`、`equity` 行数组，每行字段相同）：资产金额为期末借方余额减贷方余额，负债与权益取相反方向；每行只展示自身金额，父子科目不作层级滚算；零值科目仍保留，反向余额保留负号。另返回 `total_assets`、`total_liabilities`、`total_equity_before_net_income`、`current_period_net_income`（等于 `net_income`）、`total_liabilities_and_equity`（负债、期末既有权益与本期利润之和）与 `balanced`（仅在其与 `total_assets` 精确相等时为 `true`）。全部金额统一输出两位小数字符串。
+
 ## 验证
 
 ```bash

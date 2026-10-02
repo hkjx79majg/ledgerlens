@@ -121,8 +121,15 @@ def _money(value: Decimal) -> str:
     return str(value.quantize(_CENT))
 
 
-def generate_trial_balance(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    """生成试算平衡表，返回 (HTTP 状态码, 响应体)。"""
+def _prepare(
+    payload: dict[str, Any],
+) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
+    """校验请求并汇总期初与期间发生额，供试算平衡表与财务报表共用。
+
+    返回 (errors, context)：errors 非空（已按 path、code 排序）时 context 为
+    None；否则 context 含 chart_id、currency、chart_accounts、opening_by_code、
+    period_by_code。
+    """
     errors: list[dict[str, str]] = []
 
     # ---- 顶层未知字段 ----
@@ -356,9 +363,9 @@ def generate_trial_balance(payload: dict[str, Any]) -> tuple[int, dict[str, Any]
 
     if errors:
         errors.sort(key=lambda item: (item["path"], item["code"]))
-        return 422, {"valid": False, "errors": errors}
+        return errors, None
 
-    # ---- 成功：按科目汇总期初、期间发生与期末 ----
+    # ---- 汇总期初与期间发生额，供各报表共用 ----
     opening_by_code = {item["code"]: item for item in opening_items}
     period_by_code: dict[str, list[Decimal]] = {}
     for entry in payload["entries"]:
@@ -367,6 +374,26 @@ def generate_trial_balance(payload: dict[str, Any]) -> tuple[int, dict[str, Any]
             bucket[0] += Decimal(line["debit"])
             bucket[1] += Decimal(line["credit"])
 
+    return [], {
+        "chart_id": chart_id,
+        "currency": currency,
+        "chart_accounts": chart_accounts,
+        "opening_by_code": opening_by_code,
+        "period_by_code": period_by_code,
+    }
+
+
+def generate_trial_balance(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """生成试算平衡表，返回 (HTTP 状态码, 响应体)。"""
+    errors, context = _prepare(payload)
+    if errors:
+        return 422, {"valid": False, "errors": errors}
+
+    chart_accounts = context["chart_accounts"]
+    opening_by_code = context["opening_by_code"]
+    period_by_code = context["period_by_code"]
+
+    # ---- 成功：按科目汇总期初、期间发生与期末 ----
     rows: list[dict[str, Any]] = []
     totals = [_ZERO] * 6
     for code in sorted(chart_accounts):
@@ -410,10 +437,10 @@ def generate_trial_balance(payload: dict[str, Any]) -> tuple[int, dict[str, Any]
 
     return 200, {
         "valid": True,
-        "chart_id": chart_id,
+        "chart_id": context["chart_id"],
         "period_start": payload["period_start"],
         "period_end": payload["period_end"],
-        "currency": currency,
+        "currency": context["currency"],
         "accounts": rows,
         "totals": {
             "opening_debit": _money(totals[0]),
