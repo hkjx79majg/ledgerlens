@@ -36,16 +36,29 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": {"code": "not_found", "message": f"no route for {self.path}"}})
 
     def do_POST(self) -> None:
-        if self.path != "/v1/journal-entries/validate":
+        if self.path == "/v1/journal-entries/validate":
+            handler = self.service.validate_journal_entry
+        elif self.path == "/v1/chart-of-accounts/validate":
+            handler = self.service.validate_chart_of_accounts
+        else:
             self.send_json(404, {"error": {"code": "not_found", "message": f"no route for {self.path}"}})
             return
+
+        payload = self._read_json_object()
+        if isinstance(payload, tuple):
+            status, body = payload
+            self.send_json(status, body)
+            return
+        status, body = handler(payload)
+        self.send_json(status, body)
+
+    def _read_json_object(self) -> dict | tuple[int, dict]:
+        """读取并解析 JSON 对象请求体；失败时返回 (状态码, 错误体)。"""
         media_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if media_type != "application/json":
-            self.send_json(
-                415,
-                {"error": {"code": "unsupported_media_type", "message": "expected application/json"}},
-            )
-            return
+            return 415, {
+                "error": {"code": "unsupported_media_type", "message": "expected application/json"}
+            }
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -54,16 +67,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-            self.send_json(400, {"error": {"code": "invalid_json", "message": "request body is not valid JSON"}})
-            return
+            return 400, {
+                "error": {"code": "invalid_json", "message": "request body is not valid JSON"}
+            }
         if not isinstance(payload, dict):
-            self.send_json(
-                400,
-                {"error": {"code": "request_not_object", "message": "request body must be a JSON object"}},
-            )
-            return
-        status, body = self.service.validate_journal_entry(payload)
-        self.send_json(status, body)
+            return 400, {
+                "error": {
+                    "code": "request_not_object",
+                    "message": "request body must be a JSON object",
+                }
+            }
+        return payload
 
     def log_message(self, fmt: str, *args: object) -> None:
         """Silence per-request logging so recorded output stays stable."""
