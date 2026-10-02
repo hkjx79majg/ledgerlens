@@ -38,6 +38,14 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并附 `income_statement` 与 `balance_sheet`。损益表按 `account_code` 字典序在 `revenue`、`expense` 分组列出全部收入、费用科目，每行含 `account_code`、`name`、`amount`：收入为本期贷方发生额减借方发生额，费用为本期借方发生额减贷方发生额，并汇总 `total_revenue`、`total_expense`、`net_income`。资产负债表按相同顺序在 `assets`、`liabilities`、`equity` 分组列出全部资产、负债、权益科目，每行字段相同：资产为期末借方余额减贷方余额，负债和权益取相反方向；另返回 `total_assets`、`total_liabilities`、`total_equity_before_net_income`、`current_period_net_income`（等于 `net_income`）、`total_liabilities_and_equity`（负债、期末既有权益与本期利润之和）与 `balanced`（仅在其与 `total_assets` 精确相等时为 true）。父子科目均只展示自身金额，不作层级滚算；金额统一输出两位小数字符串，反向余额保留负号，零值科目仍保留；处理不落盘、不保留状态，相同输入结果一致。
 
+## 现金流量表生成
+
+`POST /v1/cash-flow-statements/generate`（`Content-Type: application/json`）由同一账务输入无状态地生成现金流量表。请求在财务报表输入之上新增两个顶层字段：`cash_account_codes` 为非空、无重复的现金科目代码数组，`entry_activities` 为与 `entries` 等长的活动标注数组，元素仅为 `operating`、`investing`、`financing` 或 `null`；顶层拒绝未知字段，既有字段的校验与试算平衡表端点完全一致。现金变动按指定现金科目的借方减贷方计算，正为流入、负为流出，不滚算父子科目。
+
+新增校验与错误码：`cash_account_codes` 缺失报 `required`，非数组或元素非字符串报 `invalid_type`，空数组报 `too_few_cash_accounts`，空字符串元素报 `blank_value`，重复报 `duplicate_cash_account`；科目未知、停用、非资产类依次报 `unknown_account`、`inactive_account`、`cash_account_not_asset`。`entry_activities` 缺失报 `required`，非数组报 `invalid_type`，长度与 `entries` 不符报 `activity_count_mismatch`，元素非法报 `invalid_cash_flow_activity`；现金变动非零而标注为 `null` 报 `missing_cash_flow_activity`，现金变动为零却标注活动报 `activity_without_cash_change`。依赖无效时不派生关联错误（如 chart 无效则不检查现金科目的存在性、启用状态与类别，凭证无效则不检查其活动标注一致性）。失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并附 `cash_flow_statement`：按 `operating`、`investing`、`financing` 三类活动分区，每区含 `items` 与 `total`，`items` 仅列现金变动非零的凭证，按 `entries` 顺序输出 `voucher_id`、`posting_date` 与两位小数带符号 `amount`。另返回 `beginning_cash_balance`（指定现金科目期初借方减贷方之和）、`net_cash_change`（三类活动合计，等于净变动）与 `ending_cash_balance`（期初加净变动）。金额使用精确十进制并统一输出两位小数；处理不落盘、不保留状态，相同输入结果一致。
+
 ## 验证
 
 ```bash

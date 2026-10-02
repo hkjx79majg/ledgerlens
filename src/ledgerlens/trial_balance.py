@@ -123,18 +123,23 @@ def _money(value: Decimal) -> str:
 
 def _prepare(
     payload: dict[str, Any],
-) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
-    """校验请求并汇总期初与期间发生额，供试算平衡表与财务报表共用。
+    extra_fields: tuple[str, ...] = (),
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    """校验请求并汇总期初与期间发生额，供试算平衡表与各报表共用。
+
+    extra_fields 允许调用方（如现金流量表）在既有字段之外声明额外的顶层
+    字段，避免被误判为 unknown_field。
 
     返回 (errors, context)：errors 非空（已按 path、code 排序）时 context 为
-    None；否则 context 含 chart_id、currency、chart_accounts、opening_by_code、
-    period_by_code。
+    部分上下文，仅含 chart_id、currency、chart_accounts、entry_nodes（可能为
+    None 或缺项），供调用方在依赖有效的前提下继续派生跨对象错误；否则
+    context 另含 opening_by_code、period_by_code，可直接用于报表汇总。
     """
     errors: list[dict[str, str]] = []
 
     # ---- 顶层未知字段 ----
     for key in payload:
-        if key not in _REQUEST_FIELDS:
+        if key not in _REQUEST_FIELDS and key not in extra_fields:
             _add(errors, f"/{_escape(key)}", "unknown_field", f"unknown field {key!r}")
 
     # ---- 期间：真实日期且先后有序 ----
@@ -311,7 +316,14 @@ def _prepare(
                     "posting_date_out_of_period",
                     "posting_date must be within [period_start, period_end]",
                 )
-            entry_nodes.append({"base": base, "entry": entry})
+            entry_nodes.append(
+                {
+                    "base": base,
+                    "index": index,
+                    "entry": entry,
+                    "valid": entry_status == 200,
+                }
+            )
 
     # ---- 科目引用：仅当 chart 整体有效时推导存在性与启用状态 ----
     if chart_accounts is not None:
@@ -363,7 +375,12 @@ def _prepare(
 
     if errors:
         errors.sort(key=lambda item: (item["path"], item["code"]))
-        return errors, None
+        return errors, {
+            "chart_id": chart_id,
+            "currency": currency,
+            "chart_accounts": chart_accounts,
+            "entry_nodes": entry_nodes,
+        }
 
     # ---- 汇总期初与期间发生额，供各报表共用 ----
     opening_by_code = {item["code"]: item for item in opening_items}
@@ -380,6 +397,7 @@ def _prepare(
         "chart_accounts": chart_accounts,
         "opening_by_code": opening_by_code,
         "period_by_code": period_by_code,
+        "entry_nodes": entry_nodes,
     }
 
 
