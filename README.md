@@ -38,6 +38,14 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并附 `income_statement` 与 `balance_sheet`。损益表按 `account_code` 字典序在 `revenue`、`expense` 分组列出全部收入、费用科目，每行含 `account_code`、`name`、`amount`：收入为本期贷方发生额减借方发生额，费用为本期借方发生额减贷方发生额，并汇总 `total_revenue`、`total_expense`、`net_income`。资产负债表按相同顺序在 `assets`、`liabilities`、`equity` 分组列出全部资产、负债、权益科目，每行字段相同：资产为期末借方余额减贷方余额，负债和权益取相反方向；另返回 `total_assets`、`total_liabilities`、`total_equity_before_net_income`、`current_period_net_income`（等于 `net_income`）、`total_liabilities_and_equity`（负债、期末既有权益与本期利润之和）与 `balanced`（仅在其与 `total_assets` 精确相等时为 true）。父子科目均只展示自身金额，不作层级滚算；金额统一输出两位小数字符串，反向余额保留负号，零值科目仍保留；处理不落盘、不保留状态，相同输入结果一致。
 
+## 现金流量表生成
+
+`POST /v1/cash-flow-statements/generate`（`Content-Type: application/json`）在财务报表同一账务输入上新增两个顶层字段，无状态地生成现金流量表。`cash_account_codes` 为非空、无重复的科目代码数组：非数组报 `invalid_type`，空数组报 `too_few_cash_accounts`，元素非字符串报 `invalid_type`、空字符串报 `blank_value`、重复报 `duplicate_cash_account`；每个代码还须依次通过存在（`unknown_account`）、启用（`inactive_account`）、资产类（`cash_account_not_asset`）校验。`entry_activities` 为与 `entries` 等长的数组，元素仅可为 `operating`/`investing`/`financing` 或 null：非数组报 `invalid_type`，长度不符报 `activity_count_mismatch`，取值非法报 `invalid_cash_flow_activity`。凭证现金净变动非零却配 null 报 `missing_cash_flow_activity`，净变动为零却配活动报 `activity_without_cash_change`；依赖字段或凭证本身无效时不派生这些关联错误。
+
+既有字段沿用试算平衡表端点的全部校验，顶层拒绝未知字段（因此旧端点仍拒绝这两个新字段）。失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+指定现金科目的期初余额与每张凭证的现金变动均按「借方减贷方」计算，正为流入、负为流出；父子科目不滚算，只计显式指定的科目。成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并附 `cash_flow_statement`：按 `operating`、`investing`、`financing` 分区，各区含 `items` 与 `total`；`items` 仅列现金变动非零的凭证并保持 `entries` 顺序，每项含 `voucher_id`、`posting_date` 与两位小数带符号 `amount`。另返回 `beginning_cash_balance`、`net_cash_change`、`ending_cash_balance`：三区合计等于净变动，期初加净变动等于期末。金额使用精确十进制；处理不落盘、不保留状态，相同输入结果一致。
+
 ## 验证
 
 ```bash

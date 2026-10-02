@@ -1,8 +1,8 @@
 """Core service surface for LedgerLens.
 
 Currently exposes process health, stateless double-entry journal and
-chart-of-accounts validation, plus stateless trial-balance and
-financial-statement generation.
+chart-of-accounts validation, plus stateless trial-balance,
+financial-statement and cash-flow-statement generation.
 Keep the public surface here backward compatible.
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import __version__
+from .cash_flow import generate_cash_flow_statement
 from .chart import validate_chart_of_accounts
 from .financial_statements import generate_financial_statements
 from .journal import validate_journal_entry
@@ -41,3 +42,7 @@ class Service:
     def generate_financial_statements(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """由期初余额与期间凭证生成损益表与资产负债表，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
         return generate_financial_statements(payload)
+
+    def generate_cash_flow_statement(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """由期初余额与期间凭证生成现金流量表，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
+        return generate_cash_flow_statement(payload)

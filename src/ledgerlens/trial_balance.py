@@ -123,18 +123,21 @@ def _money(value: Decimal) -> str:
 
 def _prepare(
     payload: dict[str, Any],
+    extra_fields: tuple[str, ...] = (),
 ) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
-    """校验请求并汇总期初与期间发生额，供试算平衡表与财务报表共用。
+    """校验请求并汇总期初与期间发生额，供各报表共用。
 
     返回 (errors, context)：errors 非空（已按 path、code 排序）时 context 为
     None；否则 context 含 chart_id、currency、chart_accounts、opening_by_code、
-    period_by_code。
+    period_by_code。`extra_fields` 声明该端点在标准字段之外额外允许的顶层字段，
+    这些字段本身的业务校验由调用方负责。
     """
     errors: list[dict[str, str]] = []
 
     # ---- 顶层未知字段 ----
+    allowed_fields = _REQUEST_FIELDS + tuple(extra_fields)
     for key in payload:
-        if key not in _REQUEST_FIELDS:
+        if key not in allowed_fields:
             _add(errors, f"/{_escape(key)}", "unknown_field", f"unknown field {key!r}")
 
     # ---- 期间：真实日期且先后有序 ----
