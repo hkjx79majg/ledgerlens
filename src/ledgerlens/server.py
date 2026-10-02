@@ -39,6 +39,7 @@ class Handler(BaseHTTPRequestHandler):
         route = {
             "/v1/journal-entries/validate": self.service.validate_journal_entry,
             "/v1/chart-of-accounts/validate": self.service.validate_chart_of_accounts,
+            "/v1/trial-balances/generate": self.service.generate_trial_balance,
         }.get(self.path)
         if route is None:
             self.send_json(404, {"error": {"code": "not_found", "message": f"no route for {self.path}"}})
