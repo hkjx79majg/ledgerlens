@@ -89,6 +89,68 @@ class HttpEndpointTest(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(payload["error"]["code"], "not_found")
 
+    def test_chart_endpoint_accepts_valid_chart(self) -> None:
+        body = {
+            "chart_id": "COA-1",
+            "effective_date": "2026-10-03",
+            "accounts": [
+                {
+                    "code": "1000",
+                    "name": "Assets",
+                    "type": "asset",
+                    "normal_balance": "debit",
+                    "active": True,
+                    "parent_code": None,
+                }
+            ],
+        }
+        status, payload = self.request(
+            "POST", "/v1/chart-of-accounts/validate", body, "application/json"
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["valid"])
+        self.assertEqual(payload["chart_id"], "COA-1")
+        self.assertEqual(payload["effective_date"], "2026-10-03")
+        self.assertEqual(payload["account_count"], 1)
+        self.assertEqual(payload["root_count"], 1)
+        self.assertEqual(
+            payload["type_counts"],
+            {"asset": 1, "liability": 0, "equity": 0, "revenue": 0, "expense": 0},
+        )
+
+    def test_chart_endpoint_422_on_validation_error(self) -> None:
+        status, payload = self.request(
+            "POST",
+            "/v1/chart-of-accounts/validate",
+            {"chart_id": "c", "effective_date": "2026-10-03", "accounts": []},
+            "application/json",
+        )
+        self.assertEqual(status, 422)
+        self.assertFalse(payload["valid"])
+        self.assertIn(
+            ("/accounts", "too_few_accounts"),
+            {(e["path"], e["code"]) for e in payload["errors"]},
+        )
+
+    def test_chart_endpoint_media_json_and_object_errors(self) -> None:
+        status, payload = self.request(
+            "POST", "/v1/chart-of-accounts/validate", "{}", "text/plain"
+        )
+        self.assertEqual(status, 415)
+        self.assertEqual(payload["error"]["code"], "unsupported_media_type")
+
+        status, payload = self.request(
+            "POST", "/v1/chart-of-accounts/validate", "{bad", "application/json"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_json")
+
+        status, payload = self.request(
+            "POST", "/v1/chart-of-accounts/validate", "[1]", "application/json"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "request_not_object")
+
 
 if __name__ == "__main__":
     unittest.main()

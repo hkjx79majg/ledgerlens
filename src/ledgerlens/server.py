@@ -36,7 +36,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": {"code": "not_found", "message": f"no route for {self.path}"}})
 
     def do_POST(self) -> None:
-        if self.path != "/v1/journal-entries/validate":
+        route = {
+            "/v1/journal-entries/validate": self.service.validate_journal_entry,
+            "/v1/chart-of-accounts/validate": self.service.validate_chart_of_accounts,
+        }.get(self.path)
+        if route is None:
             self.send_json(404, {"error": {"code": "not_found", "message": f"no route for {self.path}"}})
             return
         media_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -62,7 +66,7 @@ class Handler(BaseHTTPRequestHandler):
                 {"error": {"code": "request_not_object", "message": "request body must be a JSON object"}},
             )
             return
-        status, body = self.service.validate_journal_entry(payload)
+        status, body = route(payload)
         self.send_json(status, body)
 
     def log_message(self, fmt: str, *args: object) -> None:
