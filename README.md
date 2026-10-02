@@ -24,6 +24,14 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，原样带回 `chart_id`、`effective_date`，并给出整数 `account_count`、`root_count` 与覆盖五类数量的 `type_counts`。媒体类型、JSON 解析与顶层类型错误的状态码和错误体与凭证端点一致；该校验同样不落盘、不保留状态。
 
+## 试算平衡表生成
+
+`POST /v1/trial-balances/generate`（`Content-Type: application/json`）由期初余额与期间凭证无状态地生成试算平衡表。请求须含真实 `YYYY-MM-DD` 日历日期 `period_start`、`period_end`（先后有序，否则 `invalid_period`）、三位大写字母 `currency`、与科目体系校验同构的 `chart`、期初数组 `opening_balances`（每项含 `account_code`、`debit`、`credit`，仅一侧大于零，否则 `invalid_side`）以及与凭证校验同构的 `entries` 数组；顶层与期初项均拒绝未知字段。`chart` 与 `entries` 的字段级错误复用两个校验器，路径分别加 `/chart`、`/entries/{i}` 前缀（凭证不平衡记为 `/entries/{i}` 的 `unbalanced_entry`）。
+
+跨对象规则：`chart.effective_date` 不得晚于 `period_start`（`chart_not_effective`）；凭证币种须与请求一致（`currency_mismatch`）；`posting_date` 须落在期间闭区间内（`posting_date_out_of_period`）；期初项与分录引用的科目须存在（`unknown_account`）且启用（`inactive_account`）；期初科目不得重复（`duplicate_opening_account`）；期初借贷总额须平衡（`unbalanced_opening_balances`）。字段无效时不派生依赖它的错误。失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并按 `account_code` 字典序返回 chart 全部科目的 `accounts` 行：每行含 `code`、`name`、`type`、`opening_debit`/`opening_credit`、`period_debit`/`period_credit`、`ending_debit`/`ending_credit`；期末为期初净额加期间净发生额抵销后仅落一侧，零额两侧均为 `0.00`。`totals` 汇总六个金额列，父子科目不重复汇总，每行只计自身余额。金额使用精确十进制并统一输出两位小数；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致；处理不落盘、不保留状态。
+
 ## 验证
 
 ```bash
