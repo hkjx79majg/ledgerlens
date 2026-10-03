@@ -46,6 +46,7 @@ class Handler(BaseHTTPRequestHandler):
             "/v1/recognition-schedules/generate": self.service.generate_recognition_schedule,
             "/v1/depreciation-schedules/generate": self.service.generate_depreciation_schedule,
             "/v1/asset-impairments/generate": self.service.generate_asset_impairment,
+            "/v1/foreign-currency-remeasurements/generate": self.service.generate_foreign_currency_remeasurement,
         }.get(self.path)
         if route is None:
             self.send_json(404, {"error": {"code": "not_found", "message": f"no route for {self.path}"}})

@@ -3,7 +3,8 @@
 Currently exposes process health, stateless double-entry journal and
 chart-of-accounts validation, plus stateless trial-balance,
 financial-statement, cash-flow-statement, period-close,
-recognition-schedule, depreciation-schedule and asset-impairment generation.
+recognition-schedule, depreciation-schedule, asset-impairment and
+foreign-currency-remeasurement generation.
 Keep the public surface here backward compatible.
 """
 
@@ -20,6 +21,7 @@ from .impairment import generate_asset_impairment
 from .journal import validate_journal_entry
 from .period_close import generate_period_close
 from .recognition import generate_recognition_schedule
+from .remeasurement import generate_foreign_currency_remeasurement
 from .trial_balance import generate_trial_balance
 
 
@@ -67,3 +69,7 @@ class Service:
     def generate_asset_impairment(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """进行固定资产减值测算并生成复式分录，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
         return generate_asset_impairment(payload)
+
+    def generate_foreign_currency_remeasurement(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """按结账日汇率重估外币货币性头寸并生成复式分录，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
+        return generate_foreign_currency_remeasurement(payload)
