@@ -16,6 +16,7 @@ from .chart import validate_chart_of_accounts
 from .financial_statements import generate_financial_statements
 from .journal import validate_journal_entry
 from .period_close import generate_period_close
+from .recognition import generate_recognition_schedule
 from .trial_balance import generate_trial_balance
 
 
@@ -51,3 +52,7 @@ class Service:
     def generate_period_close(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """生成期末损益结转凭证与下一期期初余额，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
         return generate_period_close(payload)
+
+    def generate_recognition_schedule(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """生成跨月权责发生月度计划与复式分录，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
+        return generate_recognition_schedule(payload)
