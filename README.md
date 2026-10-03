@@ -58,6 +58,12 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`contract_id`、`recognition_type`、`start_date`、`end_date`、`currency` 与两位小数 `total_amount`，并附日期升序的 `recognition_schedule`。区间按自然月切段，每项含 `period_start`、`period_end`、首尾计入的天数 `days`、两位小数 `amount` 与 `entry`；各段按天数占比以精确十进制分摊，份额先向下取整到分，剩余分按小数余数从大到小各补一分、余数相同时较早月份优先，各项金额之和严格等于 `total_amount`。`entry` 以分段末日为 `posting_date`、以 `{voucher_id_prefix}-{YYYYMM}` 为 `voucher_id`、币种取请求币种；revenue 模式借记来源、贷记目标，expense 模式借记目标、贷记来源，`line_id` 依次为 `rec-1`、`rec-2`，每行仅一侧大于零，借贷合计精确相等，每张凭证均可通过既有凭证校验。分摊为 `0.00` 的分段不生成计划项。处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
 
+## 固定资产折旧计划
+
+`POST /v1/depreciation-schedules/generate`（`Content-Type: application/json`）无状态地生成固定资产直线法月度折旧计划与复式分录。请求含十个顶层字段，拒绝未知字段：`asset_id`、`voucher_id_prefix` 为非空字符串；`in_service_date` 为真实日历日期；`currency` 为三位大写字母；`acquisition_cost` 须为大于零、`residual_value` 须为不小于零且最多两位小数的无符号字符串，否则报 `invalid_amount`；残值不小于成本时在 `/residual_value` 报 `residual_not_less_than_cost`；`useful_life_months` 须为 1 至 1200 的整数，否则报 `invalid_useful_life`；`chart` 与科目体系校验同构（错误路径加 `/chart` 前缀），且 `effective_date` 不得晚于 `in_service_date`（`chart_not_effective`）；`accumulated_depreciation_account_code`、`depreciation_expense_account_code` 为非空字符串，两者相同时在 `/depreciation_expense_account_code` 报 `duplicate_depreciation_account`。两科目分别按存在（`unknown_account`）、启用（`inactive_account`）、类别（`account_type_mismatch`）依次只报一个：累计折旧科目须为 asset、折旧费用科目须为 expense。末月超出日历范围时在 `/useful_life_months` 报 `schedule_out_of_range`。关联错误只依赖自身字段有效：科目体系无效时不派生科目类错误，成本无效时不派生残值比较错误。缺失、类型、空值、日期、币种错误沿用既有错误码；失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`asset_id`、`in_service_date`、`currency`、两位小数 `acquisition_cost` 与 `residual_value`、`useful_life_months`，并附日期升序的 `depreciation_schedule`。从启用日所在月月末起按整月连续计提指定月数，每项含 `depreciation_date`、两位小数 `amount`、`accumulated_depreciation`、`net_book_value` 与 `entry`。可折旧金额为成本减残值，按整数分平均分配，余数从最早月份起各补一分；各月之和严格等于可折旧金额，期末累计折旧等于成本减残值、账面净值等于残值。非零月份的 `entry` 以当月月末为 `posting_date`、以 `{voucher_id_prefix}-{YYYYMM}` 为 `voucher_id`、币种取请求币种，`dep-1` 行借记折旧费用科目、`dep-2` 行贷记累计折旧科目，每行仅一侧大于零，借贷合计精确相等，每张凭证均可通过既有凭证校验；金额为 `0.00` 的月份仍保留在计划中且 `entry` 为 `null`。处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
+
 ## 验证
 
 ```bash
