@@ -46,6 +46,12 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 指定现金科目的期初余额与每张凭证的现金变动均按「借方减贷方」计算，正为流入、负为流出；父子科目不滚算，只计显式指定的科目。成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并附 `cash_flow_statement`：按 `operating`、`investing`、`financing` 分区，各区含 `items` 与 `total`；`items` 仅列现金变动非零的凭证并保持 `entries` 顺序，每项含 `voucher_id`、`posting_date` 与两位小数带符号 `amount`。另返回 `beginning_cash_balance`、`net_cash_change`、`ending_cash_balance`：三区合计等于净变动，期初加净变动等于期末。金额使用精确十进制；处理不落盘、不保留状态，相同输入结果一致。
 
+## 期末损益结转
+
+`POST /v1/period-closes/generate`（`Content-Type: application/json`）在试算平衡表的同一账务输入上新增两个非空字符串顶层字段，无状态地生成期末损益结转凭证与下一期期初余额：`retained_earnings_account_code` 须指向存在（`unknown_account`）、启用（`inactive_account`）的 equity 科目（否则 `retained_earnings_not_equity`，三类依次只报一个）；`closing_voucher_id` 与任一 `entries` 中字段有效的 `voucher_id` 相同时报 `duplicate_voucher_id`。收入或费用科目带非零期初余额时，在对应 `/opening_balances/{i}` 报 `nonzero_temporary_opening_balance`。关联错误只依赖自身字段有效：科目体系无效时不派生留存收益与期初类错误，期初项金额字段无效、凭证 `voucher_id` 字段无效时不派生对应关联错误。既有字段沿用试算平衡表端点的全部校验、错误抑制与排序（旧端点仍拒绝这两个新字段）；缺失、类型、空值错误沿用既有错误码。失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并附 `net_income`、`closing_entry`、`next_opening_balances`。结转只取本期发生额：非零收入按「贷方减借方」的反方向（借记收入）清零，非零费用按「借方减贷方」的反方向（贷记费用）清零；`net_income` 为收入合计减费用合计，正数贷记留存收益、负数借记、零值不生成该行。`closing_entry` 使用请求的 `closing_voucher_id`、`posting_date` 取 `period_end`、`currency` 取请求币种；损益行按 `account_code` 字典序排列、留存收益行置后，`line_id` 依次为 `close-1`、`close-2`……每行金额为非负两位小数字符串且仅一侧大于零，借贷合计精确相等；无非零损益发生额时 `closing_entry` 为 `null`。`next_opening_balances` 只含资产、负债、权益科目的期末净额（留存收益叠加本期净利润），按 `account_code` 字典序排列，非零余额抵销后仅落一侧、零余额省略，父子科目只计自身。全部金额使用精确十进制并统一输出两位小数；处理不落盘、不保留状态，相同输入结果一致。
+
 ## 验证
 
 ```bash
