@@ -52,6 +52,12 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并附 `net_income`、`closing_entry`、`next_opening_balances`。结转只取本期发生额：非零收入按「贷方减借方」的反方向（借记收入）清零，非零费用按「借方减贷方」的反方向（贷记费用）清零；`net_income` 为收入合计减费用合计，正数贷记留存收益、负数借记、零值不生成该行。`closing_entry` 使用请求的 `closing_voucher_id`、`posting_date` 取 `period_end`、`currency` 取请求币种；损益行按 `account_code` 字典序排列、留存收益行置后，`line_id` 依次为 `close-1`、`close-2`……每行金额为非负两位小数字符串且仅一侧大于零，借贷合计精确相等；无非零损益发生额时 `closing_entry` 为 `null`。`next_opening_balances` 只含资产、负债、权益科目的期末净额（留存收益叠加本期净利润），按 `account_code` 字典序排列，非零余额抵销后仅落一侧、零余额省略，父子科目只计自身。全部金额使用精确十进制并统一输出两位小数；处理不落盘、不保留状态，相同输入结果一致。
 
+## 权责发生确认计划
+
+`POST /v1/recognition-schedules/generate`（`Content-Type: application/json`）无状态地生成待摊费用或递延收入的月度确认计划与复式分录。请求含十个顶层字段，拒绝未知字段：`contract_id`、`voucher_id_prefix` 为非空字符串；`recognition_type` 只接受 `revenue` 或 `expense`，否则报 `invalid_recognition_type`；`start_date`、`end_date` 为真实日历日期且首尾日均计入天数，`start_date` 晚于 `end_date` 时在 `/start_date` 报 `invalid_period`；`currency` 为三位大写字母；`total_amount` 须为大于零且最多两位小数的无符号字符串，否则报 `invalid_amount`；`chart` 与科目体系校验同构（错误路径加 `/chart` 前缀），且 `effective_date` 不得晚于 `start_date`（`chart_not_effective`）；`source_account_code`、`target_account_code` 为非空字符串，两者相同时在 `/target_account_code` 报 `duplicate_recognition_account`。两科目分别按存在（`unknown_account`）、启用（`inactive_account`）、类别（`account_type_mismatch`）依次只报一个：revenue 要求来源为 liability、目标为 revenue，expense 要求来源为 asset、目标为 expense。关联错误只依赖自身字段有效：科目体系无效时不派生科目类错误，`recognition_type` 无效时不派生类别错误。缺失、类型、空值、日期、币种错误沿用既有错误码；失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`contract_id`、`recognition_type`、`start_date`、`end_date`、`currency` 与两位小数 `total_amount`，并附日期升序的 `recognition_schedule`。区间按自然月切段，每项含 `period_start`、`period_end`、首尾计入的天数 `days`、两位小数 `amount` 与 `entry`；各段按天数占比以精确十进制分摊，份额先向下取整到分，剩余分按小数余数从大到小各补一分、余数相同时较早月份优先，各项金额之和严格等于 `total_amount`。`entry` 以分段末日为 `posting_date`、以 `{voucher_id_prefix}-{YYYYMM}` 为 `voucher_id`、币种取请求币种；revenue 模式借记来源、贷记目标，expense 模式借记目标、贷记来源，`line_id` 依次为 `rec-1`、`rec-2`，每行仅一侧大于零，借贷合计精确相等，每张凭证均可通过既有凭证校验。分摊为 `0.00` 的分段不生成计划项。处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
+
 ## 验证
 
 ```bash
