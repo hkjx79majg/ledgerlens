@@ -70,6 +70,12 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`asset_id`、`test_date`、`currency` 与两位小数的 `carrying_amount`/`recoverable_amount`，并附 `impairment_loss`、`post_impairment_carrying_amount` 与 `entry`。可收回金额低于账面金额时，差额（账面金额减可收回金额）为减值损失，减值后账面金额等于可收回金额；`entry` 沿用请求的 `voucher_id`、以测试日为 `posting_date`、币种取请求币种，`imp-1` 借记减值损失科目、`imp-2` 贷记累计减值科目，每行仅一侧大于零，借贷合计精确相等且可通过既有凭证校验。可收回金额不低于账面金额时损失为 `0.00`、减值后账面金额不变且 `entry` 为 `null`。金额使用精确十进制；处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
 
+## 外币货币性项目期末重估
+
+`POST /v1/foreign-currency-remeasurements/generate`（`Content-Type: application/json`）按结账日汇率无状态地重估外币货币性资产与负债头寸并生成本位币复式分录。请求含七个顶层字段，拒绝未知字段：`voucher_id` 为非空字符串；`remeasurement_date` 为真实 `YYYY-MM-DD` 日历日期；`currency` 为三位大写字母的本位币；`chart` 与科目体系校验同构（错误路径加 `/chart` 前缀），且 `effective_date` 不得晚于 `remeasurement_date`（`chart_not_effective`）；`fx_gain_account_code`、`fx_loss_account_code` 为非空字符串，两者相同时在 `/fx_loss_account_code` 报 `duplicate_fx_account`。`positions` 为非空数组（空数组报 `too_few_positions`），每项含唯一 `position_id`（重复报 `duplicate_position_id`）、`account_code`、`foreign_currency`、`foreign_amount`、`carrying_amount`、`exchange_rate`，头寸层同样拒绝未知字段。`foreign_amount` 须大于零、`carrying_amount` 可不小于零，均为至多两位小数的无符号十进制字符串，否则报 `invalid_amount`；`exchange_rate` 须大于零、至多八位小数且不用指数，否则报 `invalid_exchange_rate`。外币等于本位币时报 `functional_currency_position`；同一科目与外币组合重复时报 `duplicate_position`。头寸科目须为启用的 `asset` 或 `liability`，汇兑收益、损失科目分别须为启用的 `revenue`、`expense`，均按存在（`unknown_account`）、启用（`inactive_account`）、类别（`account_type_mismatch`）依次只报一个。关联字段无效时不派生错误：科目体系无效时不派生科目类错误，币种或头寸字段无效时不派生外币与组合重复错误。缺失、类型、空值、日期、币种错误沿用既有错误码；失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`voucher_id`、`remeasurement_date`、`currency`，并按输入顺序给出各头寸的折算结果：每项含 `position_id`、`account_code`、`foreign_currency`、两位小数的 `foreign_amount`/`carrying_amount`、原样带回的 `exchange_rate`、`remeasured_amount`（外币金额乘汇率四舍五入至两位小数）、带符号两位小数 `adjustment`（折算额减账面金额）与借贷方向 `side`（资产增加记借、减少记贷，负债相反，零调整为 `null`）。全部非零调整按输入顺序进入同一 `entry`，账户行净额以汇兑收益科目贷记或汇兑损失科目借记抵平（净额为零时不加汇兑行），`line_id` 依次为 `fxr-1`、`fxr-2`……凭证沿用请求的 `voucher_id`、以重估日为 `posting_date`、币种取请求本位币，每行仅一侧大于零，借贷合计精确相等且可通过既有凭证校验。响应另附两位小数的 `net_fx_gain`、`net_fx_loss`；全部调整为零时二者均为 `0.00` 且 `entry` 为 `null`。金额使用精确十进制；处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
+
 ## 验证
 
 ```bash
