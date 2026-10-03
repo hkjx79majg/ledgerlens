@@ -3,7 +3,7 @@
 Currently exposes process health, stateless double-entry journal and
 chart-of-accounts validation, plus stateless trial-balance,
 financial-statement, cash-flow-statement, period-close,
-recognition-schedule and depreciation-schedule generation.
+recognition-schedule, depreciation-schedule and asset-impairment generation.
 Keep the public surface here backward compatible.
 """
 
@@ -16,6 +16,7 @@ from .cash_flow import generate_cash_flow_statement
 from .chart import validate_chart_of_accounts
 from .depreciation import generate_depreciation_schedule
 from .financial_statements import generate_financial_statements
+from .impairment import generate_asset_impairment
 from .journal import validate_journal_entry
 from .period_close import generate_period_close
 from .recognition import generate_recognition_schedule
@@ -62,3 +63,7 @@ class Service:
     def generate_depreciation_schedule(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """生成固定资产直线法折旧计划与复式分录，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
         return generate_depreciation_schedule(payload)
+
+    def generate_asset_impairment(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """进行固定资产减值测算并生成复式分录，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
+        return generate_asset_impairment(payload)

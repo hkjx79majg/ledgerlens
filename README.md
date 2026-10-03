@@ -64,6 +64,12 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`asset_id`、`in_service_date`、`currency`、两位小数的 `acquisition_cost`/`residual_value` 与 `useful_life_months`，并附日期升序的 `depreciation_schedule`。自启用日所在月末起按整月连续计提指定月数（与启用日为当月何日无关）；可折旧金额（成本减残值）按整数分平均分配，每月先取等额商，余数从最早月份起各补一分。每项含 `posting_date`（当月月末）、两位小数 `amount`（本月折旧）、`accumulated_depreciation`（截至当月累计折旧）、`net_book_value`（账面净值）与 `entry`；期末累计折旧严格等于成本减残值、账面净值等于残值。非零月份的 `entry` 以当月月末为 `posting_date`、以 `{voucher_id_prefix}-{YYYYMM}` 为 `voucher_id`、币种取请求币种，`dep-1` 借记折旧费用科目、`dep-2` 贷记累计折旧科目，每行仅一侧大于零，借贷合计精确相等且可通过既有凭证校验；本月金额为 `0.00` 的月份仍保留在计划中且 `entry` 为 `null`。金额使用精确十进制；处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
 
+## 固定资产减值测算
+
+`POST /v1/asset-impairments/generate`（`Content-Type: application/json`）无状态地进行固定资产减值测算并生成复式分录。请求含九个顶层字段，拒绝未知字段：`asset_id`、`voucher_id` 为非空字符串；`test_date` 为真实 `YYYY-MM-DD` 日历日期；`currency` 为三位大写字母；`carrying_amount`、`recoverable_amount` 为至多两位小数的无符号十进制字符串，账面金额须大于零、可收回金额须不小于零，否则报 `invalid_amount`。`chart` 与科目体系校验同构（错误路径加 `/chart` 前缀），且 `effective_date` 不得晚于 `test_date`（`chart_not_effective`）；`accumulated_impairment_account_code`（累计减值）、`impairment_loss_account_code`（减值损失）为非空字符串，两者相同时在 `/impairment_loss_account_code` 报 `duplicate_impairment_account`。两科目分别按存在（`unknown_account`）、启用（`inactive_account`）、类别（`account_type_mismatch`）依次只报一个：累计减值科目须为 `asset`，减值损失科目须为 `expense`。关联错误只依赖自身字段有效：科目体系无效时不派生科目类错误。缺失、类型、空值、日期、币种错误沿用既有错误码；失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`asset_id`、`test_date`、`currency` 与两位小数的 `carrying_amount`/`recoverable_amount`，并附 `impairment_loss`、`post_impairment_carrying_amount` 与 `entry`。可收回金额低于账面金额时，差额（账面金额减可收回金额）为减值损失，减值后账面金额等于可收回金额；`entry` 沿用请求的 `voucher_id`、以测试日为 `posting_date`、币种取请求币种，`imp-1` 借记减值损失科目、`imp-2` 贷记累计减值科目，每行仅一侧大于零，借贷合计精确相等且可通过既有凭证校验。可收回金额不低于账面金额时损失为 `0.00`、减值后账面金额不变且 `entry` 为 `null`。金额使用精确十进制；处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
+
 ## 验证
 
 ```bash
