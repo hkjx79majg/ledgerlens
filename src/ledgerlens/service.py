@@ -2,8 +2,8 @@
 
 Currently exposes process health, stateless double-entry journal and
 chart-of-accounts validation, plus stateless trial-balance,
-financial-statement, cash-flow-statement, period-close and
-recognition-schedule generation.
+financial-statement, cash-flow-statement, period-close,
+recognition-schedule and depreciation-schedule generation.
 Keep the public surface here backward compatible.
 """
 
@@ -14,6 +14,7 @@ from typing import Any
 from . import __version__
 from .cash_flow import generate_cash_flow_statement
 from .chart import validate_chart_of_accounts
+from .depreciation import generate_depreciation_schedule
 from .financial_statements import generate_financial_statements
 from .journal import validate_journal_entry
 from .period_close import generate_period_close
@@ -57,3 +58,7 @@ class Service:
     def generate_recognition_schedule(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """生成待摊费用或递延收入的月度确认计划与复式分录，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
         return generate_recognition_schedule(payload)
+
+    def generate_depreciation_schedule(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """生成固定资产直线法折旧计划与复式分录，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
+        return generate_depreciation_schedule(payload)
