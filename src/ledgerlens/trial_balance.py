@@ -121,6 +121,210 @@ def _money(value: Decimal) -> str:
     return str(value.quantize(_CENT))
 
 
+def _validate_opening_balances(
+    payload: dict[str, Any], base: str, errors: list[dict[str, str]]
+) -> list[dict[str, Any]]:
+    """校验 opening_balances 数组并返回逐项解析结果。
+
+    `base` 为该数组本身的错误路径（如 /opening_balances 或
+    /entities/0/opening_balances）；含期初科目重复与期初借贷总额平衡
+    校验。返回项含 base、code、debit、credit，供科目引用推导与汇总复用。
+    """
+    opening_items: list[dict[str, Any]] = []
+    opening_amounts_ok = True
+    if "opening_balances" not in payload:
+        _add(errors, base, "required", "opening_balances is required")
+        opening_amounts_ok = False
+    elif not isinstance(payload["opening_balances"], list):
+        _add(errors, base, "invalid_type", "opening_balances must be an array")
+        opening_amounts_ok = False
+    else:
+        seen_codes: set[str] = set()
+        for index, item in enumerate(payload["opening_balances"]):
+            item_base = f"{base}/{index}"
+            if not isinstance(item, dict):
+                _add(errors, item_base, "invalid_type", "opening balance must be an object")
+                opening_amounts_ok = False
+                continue
+            for key in item:
+                if key not in _OPENING_FIELDS:
+                    _add(
+                        errors,
+                        f"{item_base}/{_escape(key)}",
+                        "unknown_field",
+                        f"unknown field {key!r}",
+                    )
+            code = _check_nonempty_string(
+                errors, item, "account_code", f"{item_base}/account_code"
+            )
+            debit = _check_amount(errors, item, "debit", f"{item_base}/debit")
+            credit = _check_amount(errors, item, "credit", f"{item_base}/credit")
+            if debit is None or credit is None:
+                opening_amounts_ok = False
+            elif (debit > 0) == (credit > 0):
+                _add(
+                    errors,
+                    item_base,
+                    "invalid_side",
+                    "exactly one of debit and credit must be greater than zero",
+                )
+                opening_amounts_ok = False
+            if code is not None:
+                if code in seen_codes:
+                    _add(
+                        errors,
+                        f"{item_base}/account_code",
+                        "duplicate_opening_account",
+                        f"account_code {code!r} is duplicated within opening_balances",
+                    )
+                else:
+                    seen_codes.add(code)
+            opening_items.append(
+                {"base": item_base, "code": code, "debit": debit, "credit": credit}
+            )
+
+    # 期初借贷总额平衡：仅在每个期初项金额均有效且单侧时推导。
+    if opening_amounts_ok:
+        opening_debit_total = sum(
+            (item["debit"] for item in opening_items), _ZERO
+        )
+        opening_credit_total = sum(
+            (item["credit"] for item in opening_items), _ZERO
+        )
+        if opening_debit_total != opening_credit_total:
+            _add(
+                errors,
+                base,
+                "unbalanced_opening_balances",
+                "opening debit total must equal opening credit total",
+            )
+    return opening_items
+
+
+def _validate_entry_list(
+    payload: dict[str, Any],
+    field: str,
+    base: str,
+    currency: str | None,
+    period_start: date | None,
+    period_end: date | None,
+    period_ok: bool,
+    errors: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """校验凭证数组并返回逐张解析结果（含 base 与原始凭证）。
+
+    逐张复用凭证校验，错误路径加 `{base}/{i}` 前缀；跨对象错误（币种一致、
+    过账日期落在期间内）仅在对应字段本身有效时推导。`field` 为字段名
+    （entries 或 elimination_entries），`base` 为该数组的错误路径。
+    """
+    entry_nodes: list[dict[str, Any]] = []
+    if field not in payload:
+        _add(errors, base, "required", f"{field} is required")
+    elif not isinstance(payload[field], list):
+        _add(errors, base, "invalid_type", f"{field} must be an array")
+    else:
+        for index, entry in enumerate(payload[field]):
+            entry_base = f"{base}/{index}"
+            if not isinstance(entry, dict):
+                _add(errors, entry_base, "invalid_type", "entry must be an object")
+                continue
+            entry_status, entry_body = validate_journal_entry(entry)
+            if entry_status != 200:
+                if "errors" in entry_body:
+                    for err in entry_body["errors"]:
+                        _add(errors, entry_base + err["path"], err["code"], err["message"])
+                else:
+                    _add(
+                        errors,
+                        entry_base,
+                        entry_body["code"],
+                        "journal entry is not balanced",
+                    )
+            # 跨对象错误仅依赖对应字段本身有效。
+            entry_currency = entry.get("currency")
+            if (
+                currency is not None
+                and isinstance(entry_currency, str)
+                and _CURRENCY_RE.fullmatch(entry_currency) is not None
+                and entry_currency != currency
+            ):
+                _add(
+                    errors,
+                    f"{entry_base}/currency",
+                    "currency_mismatch",
+                    "entry currency must match the request currency",
+                )
+            posting_raw = entry.get("posting_date")
+            posting = _parse_date(posting_raw) if isinstance(posting_raw, str) else None
+            if (
+                period_ok
+                and posting is not None
+                and not (period_start <= posting <= period_end)
+            ):
+                _add(
+                    errors,
+                    f"{entry_base}/posting_date",
+                    "posting_date_out_of_period",
+                    "posting_date must be within [period_start, period_end]",
+                )
+            entry_nodes.append({"base": entry_base, "entry": entry})
+    return entry_nodes
+
+
+def _check_account_references(
+    chart_accounts: dict[str, dict[str, Any]],
+    opening_items: list[dict[str, Any]],
+    entry_nodes: list[dict[str, Any]],
+    errors: list[dict[str, str]],
+) -> None:
+    """推导期初项与分录引用科目的存在性与启用状态。"""
+    for item in opening_items:
+        code = item["code"]
+        if code is None:
+            continue
+        account = chart_accounts.get(code)
+        if account is None:
+            _add(
+                errors,
+                f"{item['base']}/account_code",
+                "unknown_account",
+                f"account_code {code!r} does not exist in the chart",
+            )
+        elif account["active"] is not True:
+            _add(
+                errors,
+                f"{item['base']}/account_code",
+                "inactive_account",
+                f"account {code!r} is inactive",
+            )
+    for node in entry_nodes:
+        lines = node["entry"].get("lines")
+        if not isinstance(lines, list):
+            continue
+        for line_index, line in enumerate(lines):
+            if not isinstance(line, dict):
+                continue
+            code = line.get("account_code")
+            if not isinstance(code, str) or code == "":
+                continue
+            account = chart_accounts.get(code)
+            path = f"{node['base']}/lines/{line_index}/account_code"
+            if account is None:
+                _add(
+                    errors,
+                    path,
+                    "unknown_account",
+                    f"account_code {code!r} does not exist in the chart",
+                )
+            elif account["active"] is not True:
+                _add(
+                    errors,
+                    path,
+                    "inactive_account",
+                    f"account {code!r} is inactive",
+                )
+
+
 def _prepare(
     payload: dict[str, Any],
     extra_fields: tuple[str, ...] = (),
@@ -194,175 +398,23 @@ def _prepare(
             )
 
     # ---- opening_balances：逐项字段校验 ----
-    opening_items: list[dict[str, Any]] = []
-    opening_amounts_ok = True
-    if "opening_balances" not in payload:
-        _add(errors, "/opening_balances", "required", "opening_balances is required")
-        opening_amounts_ok = False
-    elif not isinstance(payload["opening_balances"], list):
-        _add(errors, "/opening_balances", "invalid_type", "opening_balances must be an array")
-        opening_amounts_ok = False
-    else:
-        seen_codes: set[str] = set()
-        for index, item in enumerate(payload["opening_balances"]):
-            base = f"/opening_balances/{index}"
-            if not isinstance(item, dict):
-                _add(errors, base, "invalid_type", "opening balance must be an object")
-                opening_amounts_ok = False
-                continue
-            for key in item:
-                if key not in _OPENING_FIELDS:
-                    _add(
-                        errors,
-                        f"{base}/{_escape(key)}",
-                        "unknown_field",
-                        f"unknown field {key!r}",
-                    )
-            code = _check_nonempty_string(
-                errors, item, "account_code", f"{base}/account_code"
-            )
-            debit = _check_amount(errors, item, "debit", f"{base}/debit")
-            credit = _check_amount(errors, item, "credit", f"{base}/credit")
-            if debit is None or credit is None:
-                opening_amounts_ok = False
-            elif (debit > 0) == (credit > 0):
-                _add(
-                    errors,
-                    base,
-                    "invalid_side",
-                    "exactly one of debit and credit must be greater than zero",
-                )
-                opening_amounts_ok = False
-            if code is not None:
-                if code in seen_codes:
-                    _add(
-                        errors,
-                        f"{base}/account_code",
-                        "duplicate_opening_account",
-                        f"account_code {code!r} is duplicated within opening_balances",
-                    )
-                else:
-                    seen_codes.add(code)
-            opening_items.append(
-                {"base": base, "code": code, "debit": debit, "credit": credit}
-            )
-
-    # 期初借贷总额平衡：仅在每个期初项金额均有效且单侧时推导。
-    if opening_amounts_ok:
-        opening_debit_total = sum(
-            (item["debit"] for item in opening_items), _ZERO
-        )
-        opening_credit_total = sum(
-            (item["credit"] for item in opening_items), _ZERO
-        )
-        if opening_debit_total != opening_credit_total:
-            _add(
-                errors,
-                "/opening_balances",
-                "unbalanced_opening_balances",
-                "opening debit total must equal opening credit total",
-            )
+    opening_items = _validate_opening_balances(payload, "/opening_balances", errors)
 
     # ---- entries：逐张复用凭证校验，错误路径加 /entries/{i} 前缀 ----
-    entry_nodes: list[dict[str, Any]] = []
-    if "entries" not in payload:
-        _add(errors, "/entries", "required", "entries is required")
-    elif not isinstance(payload["entries"], list):
-        _add(errors, "/entries", "invalid_type", "entries must be an array")
-    else:
-        for index, entry in enumerate(payload["entries"]):
-            base = f"/entries/{index}"
-            if not isinstance(entry, dict):
-                _add(errors, base, "invalid_type", "entry must be an object")
-                continue
-            entry_status, entry_body = validate_journal_entry(entry)
-            if entry_status != 200:
-                if "errors" in entry_body:
-                    for err in entry_body["errors"]:
-                        _add(errors, base + err["path"], err["code"], err["message"])
-                else:
-                    _add(
-                        errors,
-                        base,
-                        entry_body["code"],
-                        "journal entry is not balanced",
-                    )
-            # 跨对象错误仅依赖对应字段本身有效。
-            entry_currency = entry.get("currency")
-            if (
-                currency is not None
-                and isinstance(entry_currency, str)
-                and _CURRENCY_RE.fullmatch(entry_currency) is not None
-                and entry_currency != currency
-            ):
-                _add(
-                    errors,
-                    f"{base}/currency",
-                    "currency_mismatch",
-                    "entry currency must match the request currency",
-                )
-            posting_raw = entry.get("posting_date")
-            posting = _parse_date(posting_raw) if isinstance(posting_raw, str) else None
-            if (
-                period_ok
-                and posting is not None
-                and not (period_start <= posting <= period_end)
-            ):
-                _add(
-                    errors,
-                    f"{base}/posting_date",
-                    "posting_date_out_of_period",
-                    "posting_date must be within [period_start, period_end]",
-                )
-            entry_nodes.append({"base": base, "entry": entry})
+    entry_nodes = _validate_entry_list(
+        payload,
+        "entries",
+        "/entries",
+        currency,
+        period_start,
+        period_end,
+        period_ok,
+        errors,
+    )
 
     # ---- 科目引用：仅当 chart 整体有效时推导存在性与启用状态 ----
     if chart_accounts is not None:
-        for item in opening_items:
-            code = item["code"]
-            if code is None:
-                continue
-            account = chart_accounts.get(code)
-            if account is None:
-                _add(
-                    errors,
-                    f"{item['base']}/account_code",
-                    "unknown_account",
-                    f"account_code {code!r} does not exist in the chart",
-                )
-            elif account["active"] is not True:
-                _add(
-                    errors,
-                    f"{item['base']}/account_code",
-                    "inactive_account",
-                    f"account {code!r} is inactive",
-                )
-        for node in entry_nodes:
-            lines = node["entry"].get("lines")
-            if not isinstance(lines, list):
-                continue
-            for line_index, line in enumerate(lines):
-                if not isinstance(line, dict):
-                    continue
-                code = line.get("account_code")
-                if not isinstance(code, str) or code == "":
-                    continue
-                account = chart_accounts.get(code)
-                path = f"{node['base']}/lines/{line_index}/account_code"
-                if account is None:
-                    _add(
-                        errors,
-                        path,
-                        "unknown_account",
-                        f"account_code {code!r} does not exist in the chart",
-                    )
-                elif account["active"] is not True:
-                    _add(
-                        errors,
-                        path,
-                        "inactive_account",
-                        f"account {code!r} is inactive",
-                    )
+        _check_account_references(chart_accounts, opening_items, entry_nodes, errors)
 
     if errors:
         errors.sort(key=lambda item: (item["path"], item["code"]))

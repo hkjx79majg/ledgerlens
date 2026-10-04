@@ -26,16 +26,12 @@ def _row(code: str, name: str, amount: Decimal) -> dict[str, Any]:
     return {"account_code": code, "name": name, "amount": _money(amount)}
 
 
-def generate_financial_statements(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    """生成损益表与资产负债表，返回 (HTTP 状态码, 响应体)。"""
-    errors, context = _prepare(payload)
-    if errors:
-        return 422, {"valid": False, "errors": errors}
-
-    chart_accounts = context["chart_accounts"]
-    opening_by_code = context["opening_by_code"]
-    period_by_code = context["period_by_code"]
-
+def _build_statements(
+    chart_accounts: dict[str, dict[str, Any]],
+    opening_by_code: dict[str, dict[str, Any]],
+    period_by_code: dict[str, Any],
+) -> dict[str, Any]:
+    """由科目体系、期初与本期发生额汇总构建损益表与资产负债表。"""
     revenue_rows: list[dict[str, Any]] = []
     expense_rows: list[dict[str, Any]] = []
     asset_rows: list[dict[str, Any]] = []
@@ -81,12 +77,7 @@ def generate_financial_statements(payload: dict[str, Any]) -> tuple[int, dict[st
     net_income = total_revenue - total_expense
     total_liabilities_and_equity = total_liabilities + total_equity + net_income
 
-    return 200, {
-        "valid": True,
-        "chart_id": context["chart_id"],
-        "period_start": payload["period_start"],
-        "period_end": payload["period_end"],
-        "currency": context["currency"],
+    return {
         "income_statement": {
             "revenue": revenue_rows,
             "expense": expense_rows,
@@ -105,4 +96,26 @@ def generate_financial_statements(payload: dict[str, Any]) -> tuple[int, dict[st
             "total_liabilities_and_equity": _money(total_liabilities_and_equity),
             "balanced": total_assets == total_liabilities_and_equity,
         },
+    }
+
+
+def generate_financial_statements(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """生成损益表与资产负债表，返回 (HTTP 状态码, 响应体)。"""
+    errors, context = _prepare(payload)
+    if errors:
+        return 422, {"valid": False, "errors": errors}
+
+    statements = _build_statements(
+        context["chart_accounts"],
+        context["opening_by_code"],
+        context["period_by_code"],
+    )
+
+    return 200, {
+        "valid": True,
+        "chart_id": context["chart_id"],
+        "period_start": payload["period_start"],
+        "period_end": payload["period_end"],
+        "currency": context["currency"],
+        **statements,
     }

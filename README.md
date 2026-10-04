@@ -76,6 +76,12 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`voucher_id`、`remeasurement_date`、`currency`，并按输入顺序给出各头寸的折算结果：每项含 `position_id`、`account_code`、`foreign_currency`、两位小数的 `foreign_amount`/`carrying_amount`、原样带回的 `exchange_rate`、`remeasured_amount`（外币金额乘汇率四舍五入至两位小数）、带符号两位小数 `adjustment`（折算额减账面金额）与借贷方向 `side`（资产增加记借、减少记贷，负债相反，零调整为 `null`）。全部非零调整按输入顺序进入同一 `entry`，账户行净额以汇兑收益科目贷记或汇兑损失科目借记抵平（净额为零时不加汇兑行），`line_id` 依次为 `fxr-1`、`fxr-2`……凭证沿用请求的 `voucher_id`、以重估日为 `posting_date`、币种取请求本位币，每行仅一侧大于零，借贷合计精确相等且可通过既有凭证校验。响应另附两位小数的 `net_fx_gain`、`net_fx_loss`；全部调整为零时二者均为 `0.00` 且 `entry` 为 `null`。金额使用精确十进制（`ROUND_HALF_UP`）；处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
 
+## 合并财务报表生成
+
+`POST /v1/consolidated-financial-statements/generate`（`Content-Type: application/json`）汇总多主体账务并抵消内部交易后，无状态地生成合并损益表与合并资产负债表。请求沿用财务报表端点的 `period_start`、`period_end`、`currency`、`chart`（校验与错误路径完全一致），新增 `entities` 与 `elimination_entries`，顶层拒绝未知字段。`entities` 为非空数组：非数组报 `invalid_type`，空数组报 `too_few_entities`，`entity_id` 重复时报 `duplicate_entity_id`（在后出现者路径报错）。每个主体含非空 `entity_id`、`opening_balances` 与 `entries`，主体层拒绝未知字段；全部主体共享期间、本位币和科目体系，其期初余额与凭证沿用试算平衡表端点的全部校验，错误路径加 `/entities/{i}` 前缀。`elimination_entries` 须为数组且可为空，每项沿用凭证校验，并须币种与请求一致（`currency_mismatch`）、`posting_date` 落在期间闭区间内（`posting_date_out_of_period`）、只引用已启用科目（`unknown_account`/`inactive_account`），错误路径加 `/elimination_entries/{i}` 前缀；抵消凭证只影响合并结果。依赖字段无效时不派生关联错误。失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency` 并附整数 `entity_count`。合并口径为汇总各主体期初与本期发生额后，再把抵消分录计入合并本期发生额；`income_statement` 与 `balance_sheet` 的结构、金额方向、净利润计入权益、科目顺序、零值保留与 `balanced` 口径均与单账套财务报表端点一致。`elimination_summary` 按 `account_code` 字典序汇总抵消影响，每项含 `account_code` 与两位小数的 `debit`、`credit`。金额使用精确十进制并统一输出两位小数字符串；处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
+
 ## 验证
 
 ```bash
