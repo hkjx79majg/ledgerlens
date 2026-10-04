@@ -38,6 +38,16 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency`，并附 `income_statement` 与 `balance_sheet`。损益表按 `account_code` 字典序在 `revenue`、`expense` 分组列出全部收入、费用科目，每行含 `account_code`、`name`、`amount`：收入为本期贷方发生额减借方发生额，费用为本期借方发生额减贷方发生额，并汇总 `total_revenue`、`total_expense`、`net_income`。资产负债表按相同顺序在 `assets`、`liabilities`、`equity` 分组列出全部资产、负债、权益科目，每行字段相同：资产为期末借方余额减贷方余额，负债和权益取相反方向；另返回 `total_assets`、`total_liabilities`、`total_equity_before_net_income`、`current_period_net_income`（等于 `net_income`）、`total_liabilities_and_equity`（负债、期末既有权益与本期利润之和）与 `balanced`（仅在其与 `total_assets` 精确相等时为 true）。父子科目均只展示自身金额，不作层级滚算；金额统一输出两位小数字符串，反向余额保留负号，零值科目仍保留；处理不落盘、不保留状态，相同输入结果一致。
 
+## 多主体合并报表生成
+
+`POST /v1/consolidated-financial-statements/generate`（`Content-Type: application/json`）无状态地生成多主体合并损益表与资产负债表。请求沿用财务报表的 `period_start`、`period_end`、`currency` 与 `chart`（共享同一期间、本位币与科目体系），以下沉到主体的方式新增 `entities`，并新增 `elimination_entries`；顶层不再接受单主体报表的 `opening_balances`、`entries`（按未知字段拒绝）。
+
+`entities` 为非空数组：非数组报 `invalid_type`，空数组报 `too_few_entities`，元素非对象报 `/entities/{i}` 的 `invalid_type`。每个主体仅接受 `entity_id`、`opening_balances`、`entries` 三个字段（其余报 `unknown_field`）：`entity_id` 为非空字符串，重复时在后出现者的 `/entities/{i}/entity_id` 报 `duplicate_entity_id`；主体的期初余额与凭证完全沿用试算平衡表端点的字段级与跨对象校验（含不平衡凭证的 `unbalanced_entry`、币种不一致、过账日期越界、科目不存在或停用、期初重复与不平衡等），错误路径加 `/entities/{i}` 前缀。共享的期间、本位币与科目体系只在顶层校验一次，主体的期初余额即使整体不平衡也不要求跨主体轧平。
+
+`elimination_entries` 为凭证数组且可为空（缺失报 `required`、非数组报 `invalid_type`）；每项与凭证校验同构，错误路径加 `/elimination_entries/{i}` 前缀，并做币种一致（`currency_mismatch`）、`posting_date` 落在期间闭区间内（`posting_date_out_of_period`）、分录科目存在（`unknown_account`）且启用（`inactive_account`）的跨对象校验；依赖字段无效时不派生关联错误。失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型、JSON 解析与顶层类型错误的状态码和错误体与既有端点一致。
+
+成功返回 200、`valid: true`，回显顶层 `chart_id`、`period_start`、`period_end`、`currency`，并附整数 `entity_count`。各主体期初余额与本期发生额先按科目汇总，再把抵消凭证计入合并本期发生额；`income_statement` 与 `balance_sheet` 的结构、金额方向、净利润计入权益、科目顺序、零值保留、反向负号与 `balanced` 口径与财务报表端点完全一致。另附 `elimination_summary`：按 `account_code` 字典序汇总全部抵消凭证的影响，每项含 `account_code`、`debit`、`credit`，无抵消时为空数组。金额使用精确十进制并统一输出两位小数字符串；处理不落盘、不保留状态，相同输入结果一致，既有公开方法与路由行为不变。
+
 ## 现金流量表生成
 
 `POST /v1/cash-flow-statements/generate`（`Content-Type: application/json`）在财务报表同一账务输入上新增两个顶层字段，无状态地生成现金流量表。`cash_account_codes` 为非空、无重复的科目代码数组：非数组报 `invalid_type`，空数组报 `too_few_cash_accounts`，元素非字符串报 `invalid_type`、空字符串报 `blank_value`、重复报 `duplicate_cash_account`；每个代码还须依次通过存在（`unknown_account`）、启用（`inactive_account`）、资产类（`cash_account_not_asset`）校验。`entry_activities` 为与 `entries` 等长的数组，元素仅可为 `operating`/`investing`/`financing` 或 null：非数组报 `invalid_type`，长度不符报 `activity_count_mismatch`，取值非法报 `invalid_cash_flow_activity`。凭证现金净变动非零却配 null 报 `missing_cash_flow_activity`，净变动为零却配活动报 `activity_without_cash_change`；依赖字段或凭证本身无效时不派生这些关联错误。

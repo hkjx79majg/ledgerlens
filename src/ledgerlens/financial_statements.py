@@ -26,12 +26,15 @@ def _row(code: str, name: str, amount: Decimal) -> dict[str, Any]:
     return {"account_code": code, "name": name, "amount": _money(amount)}
 
 
-def generate_financial_statements(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    """生成损益表与资产负债表，返回 (HTTP 状态码, 响应体)。"""
-    errors, context = _prepare(payload)
-    if errors:
-        return 422, {"valid": False, "errors": errors}
+def _build_financial_statements(
+    context: dict[str, Any], period_start: str, period_end: str
+) -> dict[str, Any]:
+    """按统一口径由汇总上下文构建损益表与资产负债表响应体。
 
+    context 与 trial_balance._prepare 返回结构一致（chart_id、currency、
+    chart_accounts、opening_by_code、period_by_code），单主体与合并报表共用，
+    保证结构、金额方向、科目顺序、零值与 balanced 口径完全一致。
+    """
     chart_accounts = context["chart_accounts"]
     opening_by_code = context["opening_by_code"]
     period_by_code = context["period_by_code"]
@@ -81,11 +84,11 @@ def generate_financial_statements(payload: dict[str, Any]) -> tuple[int, dict[st
     net_income = total_revenue - total_expense
     total_liabilities_and_equity = total_liabilities + total_equity + net_income
 
-    return 200, {
+    return {
         "valid": True,
         "chart_id": context["chart_id"],
-        "period_start": payload["period_start"],
-        "period_end": payload["period_end"],
+        "period_start": period_start,
+        "period_end": period_end,
         "currency": context["currency"],
         "income_statement": {
             "revenue": revenue_rows,
@@ -106,3 +109,14 @@ def generate_financial_statements(payload: dict[str, Any]) -> tuple[int, dict[st
             "balanced": total_assets == total_liabilities_and_equity,
         },
     }
+
+
+def generate_financial_statements(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """生成损益表与资产负债表，返回 (HTTP 状态码, 响应体)。"""
+    errors, context = _prepare(payload)
+    if errors:
+        return 422, {"valid": False, "errors": errors}
+
+    return 200, _build_financial_statements(
+        context, payload["period_start"], payload["period_end"]
+    )
