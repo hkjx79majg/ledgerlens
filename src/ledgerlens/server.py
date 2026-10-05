@@ -49,7 +49,8 @@ class Handler(BaseHTTPRequestHandler):
             "/v1/asset-impairments/generate": self.service.generate_asset_impairment,
             "/v1/foreign-currency-remeasurements/generate": self.service.generate_foreign_currency_remeasurement,
         }.get(self.path)
-        if route is None:
+        deferred_tax = self.path == "/deferred-tax/calculate"
+        if route is None and not deferred_tax:
             self.send_json(404, {"error": {"code": "not_found", "message": f"no route for {self.path}"}})
             return
         media_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -74,6 +75,23 @@ class Handler(BaseHTTPRequestHandler):
                 400,
                 {"error": {"code": "request_not_object", "message": "request body must be a JSON object"}},
             )
+            return
+        if deferred_tax:
+            # 递延所得税计算：Python 入口抛出的 ValueError 在此映射为
+            # 400 与稳定的 error.code/error.path，不返回部分计算结果。
+            try:
+                self.send_json(200, self.service.calculate_deferred_tax(payload))
+            except ValueError as exc:
+                self.send_json(
+                    400,
+                    {
+                        "error": {
+                            "code": getattr(exc, "code", "invalid_request"),
+                            "path": getattr(exc, "path", ""),
+                            "message": str(exc),
+                        }
+                    },
+                )
             return
         status, body = route(payload)
         self.send_json(status, body)

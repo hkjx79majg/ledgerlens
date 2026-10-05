@@ -82,6 +82,12 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 成功返回 200、`valid: true`，回显 `chart_id`、`period_start`、`period_end`、`currency` 并附整数 `entity_count`。合并口径为汇总各主体期初与本期发生额后，再把抵消分录计入合并本期发生额；`income_statement` 与 `balance_sheet` 的结构、金额方向、净利润计入权益、科目顺序、零值保留与 `balanced` 口径均与单账套财务报表端点一致。`elimination_summary` 按 `account_code` 字典序汇总抵消影响，每项含 `account_code` 与两位小数的 `debit`、`credit`。金额使用精确十进制并统一输出两位小数字符串；处理不落盘、不保留状态，相同输入结果一致；既有公开方法与路由行为不变。
 
+## 递延所得税计算
+
+`POST /deferred-tax/calculate`（`Content-Type: application/json`）根据报告日的账面价值与计税基础无状态地计算可追溯的递延所得税结果：只计算、不自动写入凭证，不改变既有报表、合并、期间结账与 HTTP 接口的既有语义。请求以单一记账本位币提交，含四个顶层字段（拒绝未知字段，`unknown_field`）：`reporting_date` 为真实 `YYYY-MM-DD` 日历日期；`currency` 为三位大写字母的记账本位币；`tax_rates` 为税率区间数组（可为空），每项含 `start_date`、`end_date`（均为真实日历日期且起始不晚于终止，否则 `invalid_period`）与 `rate`（0 到 1 之间的有限十进制值，否则 `invalid_tax_rate`），区间两两不得重叠（`overlapping_tax_rates`，在后出现者路径报错）；`items` 为暂时性差异项目数组（可为空）。每个项目含唯一 `item_id`（重复报 `duplicate_item_id`）、`classification`（`asset` 或 `liability`，否则 `invalid_classification`）、`carrying_amount`、`tax_base`、`expected_reversal_date` 与 `attribution`（`profit_or_loss`/`oci`/`equity`，否则 `invalid_attribution`）；金额只接受可无损转换为 Decimal 的有限十进制值（否则 `invalid_amount`）。资产项目的暂时性差异为账面价值减计税基础，负债项目为计税基础减账面价值；正数形成递延所得税负债，负数在可收回上限内形成递延所得税资产。可抵扣项目（差异为负）另须提供 `recoverable_cap`——本期有证据支持的可收回差异上限（缺失报 `required`），小于零报 `invalid_recoverable_cap`、超过可抵扣差异报 `recoverable_cap_exceeds_deductible`。`expected_reversal_date` 须恰好被一个税率区间覆盖：没有覆盖报 `no_applicable_tax_rate`，覆盖不止一个报 `ambiguous_tax_rate`。
+
+校验失败时，公开 Python 入口 `ledgerlens.deferred_tax.calculate_deferred_tax`（及 `Service.calculate_deferred_tax`）统一抛出 `ValueError`（`DeferredTaxError` 子类，携带 `code` 与 `path`）；HTTP 入口返回 400 与 `{"error": {"code", "path", "message"}}`，`path` 以 JSON Pointer 定位到项目或税率区间，多个错误按 `path`、`code` 字典序只报告首个，不返回部分计算结果。成功返回 200：响应回显 `reporting_date`、`currency`，保留输入项目顺序逐项给出 `item_id`、`classification`、原始 `temporary_difference`、适用 `tax_rate`、`recognized_deductible_difference`、`unrecognized_deductible_difference`、`deferred_tax_asset`、`deferred_tax_liability` 与 `attribution`；每个项目的递延所得税按四舍五入（`ROUND_HALF_UP`）保留两位小数，`total_deferred_tax_asset`、`total_deferred_tax_liability`、`net_deferred_tax`（资产减负债）与按三种归属汇总的 `attribution_totals` 均由已舍入明细相加得到。空项目集合成功返回全零汇总。媒体类型不符返回 415 `unsupported_media_type`，JSON 解析失败返回 400 `invalid_json`，顶层非对象返回 400 `request_not_object`。处理不修改输入、不落盘、不保留状态，相同输入产生字段与值均一致的结果；既有公开方法与路由行为不变。
+
 ## 验证
 
 ```bash
