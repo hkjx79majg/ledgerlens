@@ -104,6 +104,12 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 抵消规则：双方声明金额相等时全额抵消；差额绝对值不超过容差时以较小金额抵消，并把差额写入 `reconciliation_differences`；超过容差时不生成该对抵消分录、双方余额保留，并列入 `unmatched_items`。抵消分录按集团科目记账，行方向取该方该集团科目余额的反方向（该方无余额时按对方方向推导，均无法确定或方向相同无法对冲时约定 `side_a` 贷记、`side_b` 借记）。结果含抵消后的集团科目余额 `balances`（净额抵销后仅落一侧）与 `total_debit`/`total_credit`、可按实体与业务引用追溯的 `eliminations`、`reconciliation_differences`、`unmatched_items`，以及按子公司净资产余额（映射类别为 `asset`/`liability` 的余额项按借方减贷方净额加总，取抵消前口径）乘以未持股比例计算并单列的 `minority_interests`。各返回集合按实体标识、科目编码、业务引用稳定排序；全部金额运算保持 Decimal 精度，不转为二进制浮点数；处理不修改输入、不落盘、不保留状态，重复调用结果一致。空实体集合返回金额全为零且明细为空的有效结果；既有报表、比率分析及其他公开功能的调用方式、异常和输出保持不变。
 
+## 现金流折现估值
+
+`POST /v1/valuations/dcf/calculate`（`Content-Type: application/json`）无状态地进行现金流折现（DCF）估值。请求只含五个顶层字段（拒绝未知字段，`unknown_field`）：`currency` 为三位大写字母；`discount_rate`、`terminal_growth_rate` 为至多八位小数的十进制字符串，折现率须大于 0 且不超过 1，永续增长率须大于 -1，格式或范围错误报 `invalid_rate`；增长率不低于折现率时在 `/terminal_growth_rate` 报 `terminal_growth_not_less_than_discount_rate`（仅在两个比率字段本身均有效时推导）；`net_debt` 为至多两位小数的有符号十进制字符串，负值表示净现金，否则报 `invalid_amount`。`forecast_cash_flows` 为至少一项的预测现金流数组（空数组报 `too_few_forecast_periods`），每项只含 `period` 与 `free_cash_flow`（拒绝未知字段）：`period` 须为非布尔正整数（非整数或布尔报 `invalid_type`），期号从 1 起连续且不重复，非法、重复或不连续统一在 `/forecast_cash_flows` 报一处 `invalid_forecast_periods`（仅在每项 `period` 均为合法整数时推导）；`free_cash_flow` 为至多两位小数的有符号十进制字符串，否则报 `invalid_amount`。缺失、类型、空值、币种错误沿用 `required`、`invalid_type`、`blank_value`、`invalid_currency`。失败返回 422、`valid: false` 与按 `path`、`code` 排序的 `errors`；媒体类型不符返回 415 `unsupported_media_type`，JSON 解析失败返回 400 `invalid_json`，顶层非对象返回 400 `request_not_object`。
+
+成功返回 200、`valid: true`，回显 `currency`，并附 `forecast` 明细与汇总金额。`forecast` 按 `period` 升序排列，每项含 `period`、两位小数的 `free_cash_flow`、八位小数的 `discount_factor`（第 n 期为 1/(1+discount_rate)^n）与两位小数的 `present_value`。`terminal_value` 为末期现金流乘 (1+terminal_growth_rate) 再除以 (discount_rate-terminal_growth_rate)，按末期折现因子折现得 `terminal_present_value`。另返回 `forecast_present_value`（预测期现值合计）、`enterprise_value`（预测期现值合计加终值现值）与 `equity_value`（企业价值减 `net_debt`）。全部中间值不先舍入，输出统一按 `ROUND_HALF_UP` 舍入到对应精度并消除负零；金额使用精确十进制。处理不修改输入、不落盘、不保留跨请求状态，相同输入结果一致；既有公开方法与路由行为不变。
+
 ## 验证
 
 ```bash

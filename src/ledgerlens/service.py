@@ -6,9 +6,9 @@ financial-statement, multi-period financial-analysis,
 consolidated-financial-statement, cash-flow-statement,
 period-close,
 recognition-schedule, depreciation-schedule, asset-impairment,
-foreign-currency-remeasurement generation, deferred-tax calculation
-and group trial-balance consolidation with intercompany elimination.
-Keep the public surface here backward compatible.
+foreign-currency-remeasurement generation, deferred-tax calculation,
+DCF valuation, and group trial-balance consolidation with intercompany
+elimination. Keep the public surface here backward compatible.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from .period_close import generate_period_close
 from .recognition import generate_recognition_schedule
 from .remeasurement import generate_foreign_currency_remeasurement
 from .trial_balance import generate_trial_balance
+from .valuation import calculate_dcf_valuation
 
 
 class Service:
@@ -92,6 +93,10 @@ class Service:
     def calculate_deferred_tax(self, payload: dict[str, Any]) -> dict[str, Any]:
         """根据账面价值与计税基础计算递延所得税，校验失败统一抛出 ValueError。不保留任何状态。"""
         return calculate_deferred_tax(payload)
+
+    def calculate_dcf_valuation(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """无状态现金流折现估值，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
+        return calculate_dcf_valuation(payload)
 
     def consolidate_group_trial_balance(self, payload: dict[str, Any]) -> dict[str, Any]:
         """合并集团试算平衡表并抵消内部交易，校验失败抛出 ConsolidationError 相应子类。不保留任何状态。"""

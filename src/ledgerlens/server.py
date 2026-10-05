@@ -49,6 +49,7 @@ class Handler(BaseHTTPRequestHandler):
             "/v1/depreciation-schedules/generate": self.service.generate_depreciation_schedule,
             "/v1/asset-impairments/generate": self.service.generate_asset_impairment,
             "/v1/foreign-currency-remeasurements/generate": self.service.generate_foreign_currency_remeasurement,
+            "/v1/valuations/dcf/calculate": self.service.calculate_dcf_valuation,
         }.get(self.path)
         deferred_tax = self.path == "/deferred-tax/calculate"
         if route is None and not deferred_tax:
