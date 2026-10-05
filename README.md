@@ -88,6 +88,14 @@ PYTHONPATH=src python3 -m ledgerlens.server --host 127.0.0.1 --port 8080
 
 校验失败时，公开 Python 入口 `ledgerlens.deferred_tax.calculate_deferred_tax`（及 `Service.calculate_deferred_tax`）统一抛出 `ValueError`（`DeferredTaxError` 子类，携带 `code` 与 `path`）；HTTP 入口返回 400 与 `{"error": {"code", "path", "message"}}`，`path` 以 JSON Pointer 定位到项目或税率区间，多个错误按 `path`、`code` 字典序只报告首个，不返回部分计算结果。成功返回 200：响应回显 `reporting_date`、`currency`，保留输入项目顺序逐项给出 `item_id`、`classification`、原始 `temporary_difference`、适用 `tax_rate`、`recognized_deductible_difference`、`unrecognized_deductible_difference`、`deferred_tax_asset`、`deferred_tax_liability` 与 `attribution`；每个项目的递延所得税按四舍五入（`ROUND_HALF_UP`）保留两位小数，`total_deferred_tax_asset`、`total_deferred_tax_liability`、`net_deferred_tax`（资产减负债）与按三种归属汇总的 `attribution_totals` 均由已舍入明细相加得到。空项目集合成功返回全零汇总。媒体类型不符返回 415 `unsupported_media_type`，JSON 解析失败返回 400 `invalid_json`，顶层非对象返回 400 `request_not_object`。处理不修改输入、不落盘、不保留状态，相同输入产生字段与值均一致的结果；既有公开方法与路由行为不变。
 
+## 集团试算平衡表合并与内部交易抵消
+
+公开 Python 入口 `ledgerlens.consolidate_group_trial_balance`（顶层包导出，及 `Service.consolidate_group_trial_balance`）面向同一记账本位币、同一会计期间的母子公司余额数据，无状态地合并集团试算平衡表并抵消内部交易；本次不处理汇率折算、分步收购、处置或购买日公允价值调整。请求为单一字典，含四个顶层字段（拒绝未知字段）：`entities` 为实体数组（可为空），每个实体含唯一非空 `entity_id`、非空 `period`、可选 `ownership_ratio`（持股比例，默认 1，须落在 [0, 1] 闭区间）与 `balances` 余额数组；余额项既支持 `{"account_code", "side", "amount"}`（`side` 取 `debit`/`credit`），也支持既有功能产出的 `{"account_code", "debit", "credit"}` 形式（仅一侧大于零，两侧均为零的项不参与汇总也不要求映射），金额接受可无损转换为 Decimal 的有限十进制值且不得为负。`account_mapping` 按实体标识把各实体科目归并到统一集团科目，映射值可为集团科目编码字符串，或含 `{"group_account_code", "category"}` 的对象（`category` 取 `asset`/`liability`/`equity`/`revenue`/`expense`，仅用于少数股东权益的净资产口径）。`intercompany_transactions` 为成对的内部往来声明（可为空）：每对含 `side_a`/`side_b`（各含 `entity_id`、`account_code`、`amount`）、`category`（`receivable_payable`/`revenue_cost`/`dividend`）与可选 `reference` 业务引用；只按声明的类别抵消内部应收应付、内部收入成本与已明确给出的内部股利，不凭科目名称猜测交易关系。`tolerance` 为非负容差，默认 0。
+
+校验顺序：先做结构与字段校验（含持股比例区间与容差非负），失败抛 `InvalidConsolidationInputError`；再依次检查全部实体期间一致（`PeriodMismatchError`）、实体标识不重复（`DuplicateEntityError`）、每份余额借贷平衡（`UnbalancedEntityError`）、余额与声明涉及的科目映射完整（`AccountMappingError`）。五个异常均为 `ConsolidationError`（`ValueError` 子类）的子类并由顶层包导出；任一校验失败即抛出异常，不返回部分合并结果。
+
+抵消规则：双方声明金额相等时全额抵消；差额绝对值不超过容差时以较小金额抵消，并把差额写入 `reconciliation_differences`；超过容差时不生成该对抵消分录、双方余额保留，并列入 `unmatched_items`。抵消分录按集团科目记账，行方向取该方该集团科目余额的反方向（该方无余额时按对方方向推导，均无法确定或方向相同无法对冲时约定 `side_a` 贷记、`side_b` 借记）。结果含抵消后的集团科目余额 `balances`（净额抵销后仅落一侧）与 `total_debit`/`total_credit`、可按实体与业务引用追溯的 `eliminations`、`reconciliation_differences`、`unmatched_items`，以及按子公司净资产余额（映射类别为 `asset`/`liability` 的余额项按借方减贷方净额加总，取抵消前口径）乘以未持股比例计算并单列的 `minority_interests`。各返回集合按实体标识、科目编码、业务引用稳定排序；全部金额运算保持 Decimal 精度，不转为二进制浮点数；处理不修改输入、不落盘、不保留状态，重复调用结果一致。空实体集合返回金额全为零且明细为空的有效结果；既有报表、比率分析及其他公开功能的调用方式、异常和输出保持不变。
+
 ## 验证
 
 ```bash
