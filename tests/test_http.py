@@ -151,6 +151,113 @@ class HttpEndpointTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(payload["error"]["code"], "request_not_object")
 
+    def test_deferred_tax_endpoint_success(self) -> None:
+        body = {
+            "report_date": "2026-06-30",
+            "tax_rates": [
+                {"effective_from": "2026-01-01", "effective_to": "2026-12-31", "rate": "0.25"}
+            ],
+            "items": [
+                {
+                    "item_id": "a1",
+                    "nature": "asset",
+                    "carrying_amount": "1200.00",
+                    "tax_base": "1000.00",
+                    "expected_reversal_date": "2026-06-30",
+                    "attribution": "profit_or_loss",
+                }
+            ],
+        }
+        status, payload = self.request(
+            "POST", "/deferred-tax/calculate", body, "application/json"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total_deferred_tax_liability"], "50.00")
+        self.assertEqual(payload["items"][0]["tax_rate"], "0.25")
+
+    def test_deferred_tax_empty_items_is_zero_summary(self) -> None:
+        body = {
+            "report_date": "2026-06-30",
+            "tax_rates": [
+                {"effective_from": "2026-01-01", "effective_to": "2026-12-31", "rate": "0.25"}
+            ],
+            "items": [],
+        }
+        status, payload = self.request(
+            "POST", "/deferred-tax/calculate", body, "application/json"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["items"], [])
+        self.assertEqual(payload["net_deferred_tax"], "0.00")
+
+    def test_deferred_tax_400_with_stable_code_and_item_path(self) -> None:
+        body = {
+            "report_date": "2026-06-30",
+            "tax_rates": [
+                {"effective_from": "2026-01-01", "effective_to": "2026-12-31", "rate": "0.25"}
+            ],
+            "items": [
+                {
+                    "item_id": "a1",
+                    "nature": "asset",
+                    "carrying_amount": "1200.00",
+                    "tax_base": "1000.00",
+                    "expected_reversal_date": "2025-06-30",
+                    "attribution": "profit_or_loss",
+                }
+            ],
+        }
+        status, payload = self.request(
+            "POST", "/deferred-tax/calculate", body, "application/json"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "no_matching_tax_rate")
+        self.assertEqual(
+            payload["error"]["path"], "/items/0/expected_reversal_date"
+        )
+        self.assertNotIn("items", payload)
+
+    def test_deferred_tax_400_bracket_path(self) -> None:
+        body = {
+            "report_date": "2026-06-30",
+            "tax_rates": [
+                {"effective_from": "2027-01-01", "effective_to": "2026-12-31", "rate": "0.25"}
+            ],
+            "items": [],
+        }
+        status, payload = self.request(
+            "POST", "/deferred-tax/calculate", body, "application/json"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_tax_rate_period")
+        self.assertEqual(payload["error"]["path"], "/tax_rates/0/effective_from")
+
+    def test_deferred_tax_media_json_and_parse_errors(self) -> None:
+        status, payload = self.request(
+            "POST", "/deferred-tax/calculate", "{}", "text/plain"
+        )
+        self.assertEqual(status, 415)
+        self.assertEqual(payload["error"]["code"], "unsupported_media_type")
+
+        status, payload = self.request(
+            "POST", "/deferred-tax/calculate", "{bad", "application/json"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "invalid_json")
+
+        status, payload = self.request(
+            "POST", "/deferred-tax/calculate", "[1]", "application/json"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"]["code"], "request_not_object")
+
+    def test_deferred_tax_unknown_route_unchanged(self) -> None:
+        status, payload = self.request(
+            "POST", "/deferred-tax/other", {}, "application/json"
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(payload["error"]["code"], "not_found")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,8 +4,8 @@ Currently exposes process health, stateless double-entry journal and
 chart-of-accounts validation, plus stateless trial-balance,
 financial-statement, consolidated-financial-statement, cash-flow-statement,
 period-close,
-recognition-schedule, depreciation-schedule, asset-impairment and
-foreign-currency-remeasurement generation.
+recognition-schedule, depreciation-schedule, asset-impairment,
+foreign-currency-remeasurement and deferred-tax generation.
 Keep the public surface here backward compatible.
 """
 
@@ -17,6 +17,7 @@ from . import __version__
 from .cash_flow import generate_cash_flow_statement
 from .chart import validate_chart_of_accounts
 from .consolidated import generate_consolidated_financial_statements
+from .deferred_tax import calculate_deferred_tax
 from .depreciation import generate_depreciation_schedule
 from .financial_statements import generate_financial_statements
 from .impairment import generate_asset_impairment
@@ -79,3 +80,19 @@ class Service:
     def generate_foreign_currency_remeasurement(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """按结账日汇率重估外币货币性头寸并生成复式分录，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
         return generate_foreign_currency_remeasurement(payload)
+
+    def calculate_deferred_tax(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """根据报告日账面价值与计税基础计算递延所得税，返回 (HTTP 状态码, 响应体)。
+
+        纯计算：不写入凭证、不触碰报表与合并口径、不保留任何状态；契约
+        违反时底层统一抛出 ValueError，由 HTTP 层转换为 400。
+        """
+        try:
+            body = calculate_deferred_tax(payload)
+        except ValueError as exc:
+            error = {"code": getattr(exc, "code", "invalid_request"), "message": str(exc)}
+            path = getattr(exc, "path", None)
+            if path:
+                error["path"] = path
+            return 400, {"error": error}
+        return 200, body
