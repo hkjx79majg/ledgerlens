@@ -2,7 +2,8 @@
 
 Currently exposes process health, stateless double-entry journal and
 chart-of-accounts validation, plus stateless trial-balance,
-financial-statement, consolidated-financial-statement, cash-flow-statement,
+financial-statement, multi-period financial-analysis,
+consolidated-financial-statement, cash-flow-statement,
 period-close,
 recognition-schedule, depreciation-schedule, asset-impairment,
 foreign-currency-remeasurement generation, deferred-tax calculation
@@ -20,6 +21,7 @@ from .chart import validate_chart_of_accounts
 from .consolidated import generate_consolidated_financial_statements
 from .deferred_tax import calculate_deferred_tax
 from .depreciation import generate_depreciation_schedule
+from .financial_analysis import generate_financial_analysis
 from .financial_statements import generate_financial_statements
 from .group_consolidation import consolidate_group_trial_balance
 from .impairment import generate_asset_impairment
@@ -54,6 +56,10 @@ class Service:
     def generate_financial_statements(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """由期初余额与期间凭证生成损益表与资产负债表，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
         return generate_financial_statements(payload)
+
+    def generate_financial_analysis(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """由至少两期账务输入生成比较财务分析与比率，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
+        return generate_financial_analysis(payload)
 
     def generate_consolidated_financial_statements(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """汇总多主体账务并抵消内部交易后生成合并财务报表，返回 (HTTP 状态码, 响应体)。不保留任何状态。"""
