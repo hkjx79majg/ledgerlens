@@ -5,7 +5,8 @@ chart-of-accounts validation, plus stateless trial-balance,
 financial-statement, consolidated-financial-statement, cash-flow-statement,
 period-close,
 recognition-schedule, depreciation-schedule, asset-impairment,
-foreign-currency-remeasurement generation and deferred-tax calculation.
+foreign-currency-remeasurement generation, deferred-tax calculation and
+group trial-balance consolidation with intercompany elimination.
 Keep the public surface here backward compatible.
 """
 
@@ -20,6 +21,7 @@ from .consolidated import generate_consolidated_financial_statements
 from .deferred_tax import calculate_deferred_tax
 from .depreciation import generate_depreciation_schedule
 from .financial_statements import generate_financial_statements
+from .group_consolidation import GroupConsolidationResult, consolidate_group_trial_balance
 from .impairment import generate_asset_impairment
 from .journal import validate_journal_entry
 from .period_close import generate_period_close
@@ -84,3 +86,20 @@ class Service:
     def calculate_deferred_tax(self, payload: dict[str, Any]) -> dict[str, Any]:
         """根据账面价值与计税基础计算递延所得税，校验失败统一抛出 ValueError。不保留任何状态。"""
         return calculate_deferred_tax(payload)
+
+    def consolidate_group_trial_balance(
+        self,
+        entities: Any = (),
+        account_mapping: Any = None,
+        ownership: Any = None,
+        intercompany_pairs: Any = (),
+        tolerance: Any = None,
+    ) -> GroupConsolidationResult:
+        """合并集团试算平衡表并抵消内部交易，校验失败抛出 ConsolidationError 子类。不保留任何状态。"""
+        if tolerance is None:
+            return consolidate_group_trial_balance(
+                entities, account_mapping, ownership, intercompany_pairs
+            )
+        return consolidate_group_trial_balance(
+            entities, account_mapping, ownership, intercompany_pairs, tolerance
+        )
